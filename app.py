@@ -112,7 +112,7 @@ def fetch_nearby_substations(lat, lon, radius_km=25):
 
 # ---------- Streamlit UI ----------
 st.set_page_config(page_title="Power Outage Prediction", layout="wide")
-st.title("⚡ Power Outage Prediction & Substation Risk Monitor")
+st.title("⚡ Power Outage Prediction & Substation Network Dashboard")
 
 api_key = st.sidebar.text_input("🔑 OpenWeatherMap API Key", type="password")
 address_input = st.sidebar.text_input("📍 Enter Address / Landmark (e.g., Dindigul PSNACET)")
@@ -126,6 +126,7 @@ if "lat" not in st.session_state: st.session_state.lat = lat_input
 if "lon" not in st.session_state: st.session_state.lon = lon_input
 if "auto_predict" not in st.session_state: st.session_state.auto_predict = False
 
+# ---------- Geolocation ----------
 if address_input:
     try:
         loc = Nominatim(user_agent="power_outage_app").geocode(address_input)
@@ -143,6 +144,7 @@ elif city_input:
 
 st.markdown("### 🗺 Click anywhere on the map to auto-predict outage risk")
 
+# ---------- Base Map ----------
 def build_map(lat_c, lon_c, zoom=8):
     m = folium.Map(location=[lat_c, lon_c], zoom_start=zoom, tiles="CartoDB Positron")
     folium.Marker([lat_c, lon_c], popup=f"Selected: {lat_c:.4f}, {lon_c:.4f}",
@@ -168,6 +170,7 @@ st.sidebar.markdown(f"*Selected Latitude:* {lat:.6f}")
 st.sidebar.markdown(f"*Selected Longitude:* {lon:.6f}")
 st.sidebar.markdown(f"*Substation radius:* {radius_km} km")
 
+# ---------- Prediction and Visualization ----------
 if predict_btn or st.session_state.auto_predict:
     st.session_state.auto_predict = False
     if not api_key:
@@ -186,35 +189,75 @@ if predict_btn or st.session_state.auto_predict:
                 st.write(f"🌡 Temp: {res['temperature']}°C | 💧 Humidity: {res['humidity']}% | "
                          f"🌬 Wind: {res['wind_speed']} m/s | 🌧 Prec: {res['precipitation']} mm")
 
-                st.markdown("### 🏭 Nearby Substations")
+                st.markdown("### 🏭 Nearby Substations and Connected Areas")
                 subs = fetch_nearby_substations(lat, lon, radius_km)
                 if not subs:
                     st.info("No substations found nearby.")
                 else:
                     sub_data = []
+                    geolocator = Nominatim(user_agent="power_outage_app")
+
                     for s in subs:
                         sw = fetch_real_weather(s["lat"], s["lon"], api_key)
                         if not sw:
                             continue
                         sres = predict_outage_from_weather(model, sw)
+                        # Reverse geocode area name
+                        try:
+                            location = geolocator.reverse((s["lat"], s["lon"]), language="en")
+                            area_name = location.raw.get("address", {}).get("suburb") or \
+                                        location.raw.get("address", {}).get("city") or \
+                                        location.raw.get("address", {}).get("town") or \
+                                        location.raw.get("address", {}).get("village") or "Unknown"
+                        except:
+                            area_name = "Unknown"
+
                         sub_data.append({
                             "Substation": s["name"],
+                            "Area": area_name,
                             "Latitude": s["lat"],
                             "Longitude": s["lon"],
                             "Risk": sres["label"],
                             "Prob": round(sres["probability"], 2)
                         })
+
                     df = pd.DataFrame(sub_data)
                     st.dataframe(df)
 
+                    # Enhanced map with connections
                     m2 = folium.Map(location=[lat, lon], zoom_start=9, tiles="CartoDB Positron")
-                    folium.Marker([lat, lon], popup="Selected Location", icon=folium.Icon(color="blue")).add_to(m2)
+
+                    # Selected location marker
+                    folium.Marker(
+                        [lat, lon],
+                        popup="Selected Location",
+                        icon=folium.Icon(color="blue", icon="home")
+                    ).add_to(m2)
+
+                    # Substation network visualization
                     for s in sub_data:
                         c = {"Low": "green", "Medium": "orange", "High": "red"}[s["Risk"]]
-                        folium.CircleMarker(
+
+                        # Substation marker
+                        folium.Marker(
                             [s["Latitude"], s["Longitude"]],
-                            radius=8, color=c, fill=True, fill_color=c,
-                            popup=f"{s['Substation']}<br>Risk: {s['Risk']} ({s['Prob']})"
+                            popup=f"{s['Substation']}<br>{s['Area']}<br>Risk: {s['Risk']} ({s['Prob']})",
+                            icon=folium.Icon(color=c)
                         ).add_to(m2)
-                    st.markdown("### 📍 Substation Map")
+
+                        # Connection line
+                        folium.PolyLine(
+                            locations=[[lat, lon], [s["Latitude"], s["Longitude"]]],
+                            color=c, weight=2.5, opacity=0.8
+                        ).add_to(m2)
+
+                        # Area label
+                        folium.map.Marker(
+                            [s["Latitude"] + 0.02, s["Longitude"]],
+                            icon=folium.DivIcon(
+                                html=f"""<div style="font-size: 12px; color: {c}; text-align: center;">{s['Area']}</div>"""
+                            )
+                        ).add_to(m2)
+
+                    st.markdown("### 📍 Substation Network Map (with Connection Lines & Area Labels)")
                     st_folium(m2, width=900, height=600)
