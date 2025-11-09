@@ -183,7 +183,7 @@ if st.button("🔍 Predict Outage Risk & Show Substations"):
                         ).add_to(m2)
 
                         folium.PolyLine(
-                            locations=[[lat, lon], [s["Latitude"], s["Longitude']]],
+                            locations=[[lat, lon], [s["Latitude"], s["Longitude"]]],
                             color=c, weight=2.5, opacity=0.8,
                             tooltip=f"Connection to {s['Area']}"
                         ).add_to(m2)
